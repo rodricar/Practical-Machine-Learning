@@ -1,0 +1,218 @@
+---
+title: "Course_Project_Prediction_Rejane"
+author: "Rejane Rodrigues"
+date: "october, 8, 2021 - Brasilia, Brazil"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project Presentation
+
+This project aims to create a report of this Course Project Prediction describing:  
+
+1) How to build a model.  
+2) How to use cross-validation.  
+3) What I think the expected out of sample error is.  
+4) Why I made the choices that I did.   
+5) I am going to use my prediction model to predict 20 different test cases.  
+
+The work aims to investigate the feasibility of automatically assessing the quality of execution of weight lifting exercises and the impact of providing real-time feedback to the athlete - so-called "qualitative activity recognition" using on-body sensors.
+
+The authors deﬁnes "a qualitative activity recognition system as a software artefact that observes the user’s execution of an activity and compares it to a speciﬁcation". 
+
+I will focus on three aspects are critical components of any qualitative activity recognition system:    
+(a) the problem of specifying correct execution.  
+(b) the automatic and robust detection of execution mistakes.  
+(c) how to provide feedback on the quality of performance to the user.  
+
+So I explore two approaches for detecting mistakes in automated ways commonly applied in activity recognition:   
+(1) Sensor-oriented approach, in which a classiﬁcation algorithm training to execute activities, in other words, to use machine learning and pattern recognition techniques to catch errors.    
+(2) To use a model-based approach and to compare motion traces recorded using ambient sensors to a formal speciﬁcation of what constitutes correct execution. So this model-oriented approach, the activities are represented by a human skeleton model.  
+
+The methodology uses data from accelerometers on the belt, forearm, arm, and dumbell of 6 male young healthy participants aged between 20-28 years. They asked to perform barbell lifts correctly and incorrectly in 5 different fashions with a set of 10 repetitions:  
+Class A: precisely according to the specification   
+Class B: throwing the elbows to the front   
+Class C: lifting the dumbbell (1.25 kilograms) only halfway   
+Class D: lowering the dumbbell (1.25 kilograms) only halfway   
+Class E: throwing the hips to the front  
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes.
+
+The dataset proposed by PUC-Rio's teams has 5 classes (sitting-down, standing-up, standing, walking, and sitting) collected on 8 hours of activities of 4 healthy subjects.
+
+The data for this project come from this source about Human Activity Recognition - HAR of the PUC-Rio's team, Brazil:  
+http://groupware.les.inf.puc-rio.br/har.  
+More information is available from the website:   
+http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+References:
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6.
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+```{r dataset, echo = FALSE, warning = FALSE}
+RNGversion("2.14.0")
+
+url1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" 
+file1 <- "C://Users/Rejane/Documents/Cursos_R/Practical-Machine-Learning/pml-training.csv"  
+download.file(url = url1, destfile = file1)  
+
+dat1 <- data.table::fread(file1)  
+
+url2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"  
+file2 <- "C:/Users/Rejane/Documents/Cursos_R/Practical-Machine-Learning/pml-testing.csv"  
+download.file(url = url2, destfile = file2)
+
+dat2 <- data.table::fread(file2)  
+```
+
+## Cleaning Data set
+
+I needed to transform some variables to analyse the predicting model:  
+
+a) deleted six variables with only NAs and the first variable (V1) that is the index.  
+b) variable 52 was deleted as an instruction provided by the course advisor on the forum.  
+c) conveyed two variables, new_window and cvtd_timestamp, from text to numeric.  
+
+Because of this, the variables' numbers of the data set go down from 160 to 152.
+
+```{r data, echo = FALSE, warning = FALSE}
+library(magrittr) # for operator %>%
+library(dplyr) # for function pull
+library(caret)
+dim(dat1)
+dat1$classe <- as.factor(dat1$classe)
+
+# Cria a função para filtrar colunas vazias.
+filtrar_colunas_na <- function(x) {
+  index <- purrr::map_lgl(x, ~ all(is.na(.)))
+  colunas_ativas <-
+    data.frame(x = colnames(x), v = index) %>%
+    filter(v == F) %>%
+    distinct(x) %>%
+    pull
+  x <- x %>% select(colunas_ativas)
+}
+
+# Limpa colunas vazias
+dat1_cleaning <- 
+    dat1 %>% 
+    filtrar_colunas_na(.) 
+
+dat1_cleaning$cvtd_timestamp <- 
+      lubridate::as_datetime(dat1_cleaning$cvtd_timestamp, 
+                            tz = Sys.timezone())
+
+dat1_cleaning$new_window <- ifelse(dat1_cleaning$new_window=="yes", 1, 0)
+dat1_cleaning <- dat1_cleaning[ , c(-1, -52)]
+dim(dat1_cleaning)
+```
+## Training and testing set
+
+I divided the cleaned dataset in two subset: training set (3/4) and testing set (1/4).
+
+```{r subset, echo = FALSE, warning = FALSE}
+
+inTrain <- caret::createDataPartition(dat1_cleaning$classe, p = 3/4)[[1]]
+
+training <- dat1_cleaning[inTrain,]
+dim(training)
+
+testing <- dat1_cleaning[-inTrain,]
+dim(testing)
+
+set.seed(3000)
+
+```
+
+## Classification with Decision Tree
+
+First, I applied the concept of the Decision Tree that means:
+
+1) Find the first variable that best splits the outcomes into two different homogenous groups, which we call leaves and the split that you just performed is called a node.  
+2) Within each split, we then search through all the variables, again, including the variable we just split on. So find within that group if another variable or split that separates the outcome, into even more homogeneous groups.  
+3) Continue until the groups are too small or they're sufficiently pure. In other words, sufficiently homogeneous.  
+4) Stop the algorithm.  
+
+I used method "class" for a classification tree in the rpart function with control minimum number of observations default in a node be 20 before attempting a split. This split must decrease the overall lack of fit by a factor of 0 (cost complexity factor). The final model plotted shows us what all the nodes are and how they're split and what the probability of being in each class is for each split.
+
+```{r rpart, echo = FALSE, warning = FALSE}
+
+# Decision Tree
+library(rpart)
+
+model_rpart <- rpart(classe ~ ., data = training, method = "class", control = rpart.control(cp=0))
+
+print(model_rpart)
+
+library(rattle)
+fancyRpartPlot(model_rpart)
+
+```
+
+I predict new values, testing data, to the model. Here the prediction is going to be a particular class label, because the classification tree was built to predict a particular class, following the six first lines and the dimension of the prediction.
+
+```{r rpart_pred, echo = FALSE, warning = FALSE}
+pred1 <- predict(model_rpart, testing)
+
+head(pred1)
+```
+
+### Classification Random Forest with Cross-Validation
+
+I used the “cv” method (Cross Validation) to improve recognition performance and to speed the initial model selection. The number of folds or number of resampling iterations was 10 in the control train.
+
+I used a Random Forest approach, because of the characteristic noise in the sensor data, in the same ways as the authors. This algorithm is characterized by a subset of features selected randomly and independently with the same distribution for each tree in the forest.    
+The algorithmic is briefly:  
+1) Take a resample of our observed data and our training data set.  
+2) Rebuild classification or regression trees on each bootstrap sample: at each potential split, we subset the variables each time in a classification tree; that is, we also bootstrap the variables. So this algorithmic makes for a diverse set of potential trees that can be built. Then we either vote or average those trees to get the prediction for a new outcome.  
+
+The advantage of this approach is that no formal speciﬁcation is necessary. Still, even though our results show that it is possible to detect mistakes by classiﬁcation, this approach is hardly scalable. It would be infeasible to record all possible errors for each exercise.
+
+```{r rf, echo = FALSE, warning = FALSE}
+
+# Random Forest with Cross-Validation
+library(parallel)
+library(doParallel)
+library(caret)
+
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+control <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
+
+model_rf <- train(classe ~ ., data = training, method = "rf",
+                  trControl = control, prox = TRUE)
+ 
+model_rf
+
+stopCluster(cluster)
+registerDoSEQ()
+
+model_rf$resample
+confusionMatrix.train(model_rf)
+```
+
+I show the importance variables ranking of determining the class.
+
+```{r rf_vi, echo = FALSE, warning = FALSE}
+varImp(model_rf)
+```
+
+Finally, I put my plot of the accuracy of the new data predictions, using two variables between the top 10 importance to exemplify (var_roll_belt and stddev_roll_belt).
+
+```{r rf_pred, echo = FALSE, warning = FALSE}
+pred2 <- predict(model_rf, testing)
+qplot(var_roll_belt, stddev_roll_belt, colour = classe, data = training)
+
+testing$predRight <- pred2==testing$classe
+table(testing$predRight)
+qplot(var_roll_belt, stddev_roll_belt, colour = predRight, data = testing)
+
+```
